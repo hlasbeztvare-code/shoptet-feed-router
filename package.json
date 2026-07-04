@@ -1,0 +1,15 @@
+{
+  "name": "falcon-b2b-engine",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker B2B Pipeline Engine",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^4.107.0"
+  }
+}
