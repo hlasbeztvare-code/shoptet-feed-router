@@ -81,6 +81,8 @@ function sanitizeHtml(html: string): string {
   let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   clean = clean.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
   clean = clean.replace(/<[^>]+>/g, ' '); // odstranění všech ostatních tagů
+  clean = clean.replace(/&nbsp;/gi, ' '); // Náhrada &nbsp; za mezeru
+  clean = clean.replace(/#PARAMETERS#/g, ''); // Smazání #PARAMETERS# makra
   clean = clean.replace(/\]\]>/g, ']]&gt;'); // Ochrana proti rozbití CDATA
   return clean.replace(/\s+/g, ' ').trim();
 }
@@ -137,32 +139,94 @@ function mapRowToXml(row: string[], indices: CsvIndices): string {
   return xml;
 }
 
+function slugifyCZ(text: string): string {
+  return text.toString().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '');
+}
+
+function getCol(row: string[], headerMap: Record<string, number>, colNames: string[]): string {
+  for (const name of colNames) {
+    const idx = headerMap[name];
+    if (idx !== undefined && row[idx] !== undefined) {
+      return row[idx].trim();
+    }
+  }
+  return "";
+}
+
+function formatFloat(val: string): string {
+  if (!val) return '';
+  const str = val.replace(',', '.').replace(/[^0-9.-]/g, '');
+  const num = parseFloat(str);
+  return isNaN(num) ? '' : num.toString();
+}
+
 /**
- * Převedení jednoho CSV řádku na Alza/Heureka XML fragment
+ * Převedení jednoho CSV řádku na Alza XML fragment (Nový standard)
  */
-function mapAlzaRow(row: string[], indices: CsvIndices): string {
+function mapAlzaRow(row: string[], headerMap: Record<string, number>): string {
   if (row.length <= 1) return "";
 
-  let xml = `  <SHOPITEM>\n`;
-  
-  if (indices.code >= 0 && row[indices.code]) xml += `    <ITEM_ID>${escapeXml(row[indices.code])}</ITEM_ID>\n`;
-  if (indices.name >= 0 && row[indices.name]) xml += `    <PRODUCTNAME>${escapeXml(row[indices.name])}</PRODUCTNAME>\n`;
-  if (indices.description >= 0 && row[indices.description]) {
-    const cleanDesc = sanitizeHtml(row[indices.description]);
-    xml += `    <DESCRIPTION><![CDATA[${cleanDesc}]]></DESCRIPTION>\n`;
+  const stavProdeje = getCol(row, headerMap, ['Stav prodeje']);
+  if (stavProdeje === 'Není v prodeji') {
+    return ""; // Filter out
   }
-  if (indices.link >= 0 && row[indices.link]) xml += `    <URL>${escapeXml(row[indices.link])}</URL>\n`;
-  if (indices.defaultImage >= 0 && row[indices.defaultImage]) xml += `    <IMGURL>${escapeXml(row[indices.defaultImage])}</IMGURL>\n`;
-  if (indices.price >= 0 && row[indices.price]) xml += `    <PRICE_VAT>${escapeXml(row[indices.price])}</PRICE_VAT>\n`;
-  if (indices.ean >= 0 && row[indices.ean]) xml += `    <EAN>${escapeXml(row[indices.ean])}</EAN>\n`;
-  if (indices.manufacturer >= 0 && row[indices.manufacturer]) xml += `    <MANUFACTURER>${escapeXml(row[indices.manufacturer])}</MANUFACTURER>\n`;
-  xml += `    <CATEGORYTEXT>Termovize</CATEGORYTEXT>\n`;
 
-  for (const param of indices.params) {
-    const val = row[param.index];
-    if (val) {
-      xml += `    <PARAM>\n      <PARAM_NAME>${escapeXml(param.name)}</PARAM_NAME>\n      <VAL>${escapeXml(val)}</VAL>\n    </PARAM>\n`;
-    }
+  const sku = getCol(row, headerMap, ['SKU', 'code']);
+  if (!sku) return "";
+
+  const name = getCol(row, headerMap, ['Název', 'name']);
+  const slug = name ? slugifyCZ(name) : sku;
+  const url = `https://falconeurope.eu/produkt/${slug}`;
+
+  const ean = getCol(row, headerMap, ['EAN', 'ean']);
+  const manufacturer = getCol(row, headerMap, ['Výrobce', 'manufacturer']);
+  const alzaCode = getCol(row, headerMap, ['Alza kód produktu']);
+  
+  const widthStr = getCol(row, headerMap, ['Šířka', 'Width', 'Šířka [cm]']);
+  const heightStr = getCol(row, headerMap, ['Výška', 'Height', 'Výška [cm]']);
+  const depthStr = getCol(row, headerMap, ['Hloubka', 'Depth', 'Hloubka [cm]']);
+  const weightStr = getCol(row, headerMap, ['Hmotnost', 'Weight']);
+  const status = getCol(row, headerMap, ['Stav']);
+  const priceVatStr = getCol(row, headerMap, ['Cena', 'Cena s DPH', 'price', 'Cena s DPH (CZK)']);
+
+  let xml = `  <SHOPITEM>\n`;
+  xml += `    <ITEM_ID>${escapeXml(sku)}</ITEM_ID>\n`;
+  xml += `    <PRODUCTNAME>${escapeXml(name)}</PRODUCTNAME>\n`;
+  xml += `    <URL>${escapeXml(url)}</URL>\n`;
+  if (ean) xml += `    <EAN>${escapeXml(ean)}</EAN>\n`;
+  if (manufacturer) xml += `    <MANUFACTURER>${escapeXml(manufacturer)}</MANUFACTURER>\n`;
+  if (alzaCode) xml += `    <ALZA_CODE>${escapeXml(alzaCode)}</ALZA_CODE>\n`;
+
+  const w = formatFloat(widthStr);
+  const h = formatFloat(heightStr);
+  const d = formatFloat(depthStr);
+  if (w) xml += `    <WIDTH>${w}</WIDTH>\n`;
+  if (h) xml += `    <HEIGHT>${h}</HEIGHT>\n`;
+  if (d) xml += `    <DEPTH>${d}</DEPTH>\n`;
+
+  const weight = formatFloat(weightStr);
+  if (weight) xml += `    <WEIGHT>${weight}</WEIGHT>\n`;
+  
+  if (status) xml += `    <STATUS>${escapeXml(status)}</STATUS>\n`;
+
+  const price = formatFloat(priceVatStr);
+  if (price) {
+    const priceNum = parseFloat(price);
+    xml += `    <PRICE_VAT>${priceNum.toFixed(2)}</PRICE_VAT>\n`;
+  }
+
+  xml += `    <DELIVERY_DATE>0</DELIVERY_DATE>\n`;
+
+  const desc = getCol(row, headerMap, ['Popis', 'description']);
+  if (desc) {
+    const cleanDesc = sanitizeHtml(desc);
+    xml += `    <DESCRIPTION><![CDATA[${cleanDesc}]]></DESCRIPTION>\n`;
   }
 
   xml += `  </SHOPITEM>\n`;
@@ -188,6 +252,7 @@ async function processStream(
 
     const csvParser = new CSVStreamParser();
     let headers: string[] | null = null;
+    let headerMap: Record<string, number> = {};
     
     const indices: CsvIndices = {
       code: -1, name: -1, ean: -1, stock: -1, defaultImage: -1, price: -1, description: -1, link: -1, manufacturer: -1, params: []
@@ -208,6 +273,11 @@ async function processStream(
           // První řádek je hlavička, namapujeme indexy
           headers = row;
           console.log("DEBUG: Nalezene hlavicky v CSV:", headers.slice(0, 10), "...");
+          
+          for (let i = 0; i < headers.length; i++) {
+            headerMap[headers[i].trim()] = i;
+          }
+
           indices.code = headers.indexOf("code");
           indices.name = headers.indexOf("name");
           indices.ean = headers.indexOf("ean");
@@ -229,7 +299,7 @@ async function processStream(
           }
         } else {
           // Běžné řádky
-          xmlChunk += mode === "alza" ? mapAlzaRow(row, indices) : mapRowToXml(row, indices);
+          xmlChunk += mode === "alza" ? mapAlzaRow(row, headerMap) : mapRowToXml(row, indices);
         }
       }
 
@@ -244,7 +314,7 @@ async function processStream(
     let xmlChunk = "";
     for (const row of rows) {
       if (headers) {
-        xmlChunk += mode === "alza" ? mapAlzaRow(row, indices) : mapRowToXml(row, indices);
+        xmlChunk += mode === "alza" ? mapAlzaRow(row, headerMap) : mapRowToXml(row, indices);
       }
     }
     if (xmlChunk) {
