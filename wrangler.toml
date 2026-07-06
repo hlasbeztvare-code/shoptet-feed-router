@@ -6,3 +6,10 @@ compatibility_date = "2026-07-04"
 routes = [
   { pattern = "falconeurope.l-code-dynamics.com", custom_domain = true }
 ]
+
+[[kv_namespaces]]
+binding = "PRODUCT_DB"
+id = "2be067e2cded4adf8847325277691338"
+
+[triggers]
+crons = ["0 2 * * *"] # Runs every day at 2:00 AM UTC
